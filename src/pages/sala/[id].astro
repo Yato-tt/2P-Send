@@ -1,0 +1,54 @@
+---
+import Logo from "../../components/astro/Logo.astro";
+import { ReceiverCard } from "../../components/react/ReceiverCard";
+// A importação que estava faltando para carregar o Tailwind v4 nesta página:
+import "../../styles/global.css";
+---
+
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Receber Arquivo • Envio2p</title>
+  </head>
+
+  <body
+    class="bg-zinc-950 text-zinc-200 h-screen overflow-y-auto flex flex-col justify-between antialiased"
+  >
+    <header
+      class="w-full max-w-6xl mx-auto px-6 py-4 flex justify-between items-center shrink-0"
+    >
+      <Logo />
+      <div class="hidden sm:flex items-center gap-2 text-xs text-zinc-500">
+        <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+        Conectando via link direto
+      </div>
+    </header>
+
+    <main class="flex-1 flex flex-col items-center justify-center px-4 min-h-0">
+      <div class="w-full max-w-md space-y-4 text-center">
+        <div class="space-y-1">
+          <h1 class="text-xl font-bold tracking-tight text-zinc-100">
+            Você recebeu uma transferência!
+          </h1>
+          <p class="text-xs text-zinc-400 max-w-xs mx-auto">
+            Mantenha esta aba aberta enquanto o download estiver em andamento.
+          </p>
+        </div>
+
+        {
+          Astro.params.id && (
+            <ReceiverCard roomId={Astro.params.id} client:only="react" />
+          )
+        }
+      </div>
+    </main>
+
+    <footer
+      class="w-full max-w-6xl mx-auto px-6 py-4 text-center text-[10px] text-zinc-600 tracking-wide shrink-0"
+    >
+      <p>© 2026 Envio2p • Transferência direta criptografada ponta a ponta.</p>
+    </footer>
+  </body>
+</html>

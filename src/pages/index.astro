@@ -1,0 +1,51 @@
+---
+import Logo from "../components/astro/Logo.astro";
+import { SenderCard } from "../components/react/SenderCard";
+import "../../src/styles/global.css";
+---
+
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Envio2p • Transferência Direta de Arquivos P2P</title>
+  </head>
+
+  <body
+    class="bg-zinc-950 text-zinc-200 h-screen overflow-y-auto flex flex-col justify-between antialiased selection:bg-orange-500/30 selection:text-orange-400"
+  >
+    <header
+      class="w-full max-w-6xl mx-auto px-6 py-4 flex justify-between items-center shrink-0"
+    >
+      <Logo />
+      <div class="hidden sm:flex items-center gap-2 text-xs text-zinc-500">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        Sinalização ativa
+      </div>
+    </header>
+
+    <main class="flex-1 flex flex-col items-center justify-center px-4 min-h-0">
+      <div class="w-full max-w-md space-y-4 text-center">
+        <div class="space-y-1">
+          <h1
+            class="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100"
+          >
+            Envie arquivos sem intermediários.
+          </h1>
+          <p class="text-xs sm:text-sm text-zinc-400 max-w-xs mx-auto">
+            Direto do seu navegador para o destinatário, sem limites e seguro.
+          </p>
+        </div>
+
+        <SenderCard client:only="react" />
+      </div>
+    </main>
+
+    <footer
+      class="w-full max-w-6xl mx-auto px-6 py-4 text-center text-[10px] text-zinc-600 tracking-wide shrink-0"
+    >
+      <p>© 2026 Envio2p • Tecnologia Peer-to-Peer.</p>
+    </footer>
+  </body>
+</html>

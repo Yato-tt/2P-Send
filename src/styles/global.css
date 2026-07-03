@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "sonner/dist/styles.css";
+
+@theme {
+  --color-zinc-900-custom: #18181b;
+  --color-zinc-950-custom: #09090b;
+}
+
+[data-sonner-toaster] {
+  position: fixed;
+  z-index: 9999;
+}
