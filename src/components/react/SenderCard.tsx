@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, File, Copy, Check, Loader2, Plus } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
+import QRCode from 'qrcode';
 import { WebRtcConnectionService } from '../../infrastructure/network/WebRtcConnectionService';
 import { FileTransferService } from '../../core/use-cases/FileTransferService';
 import type { IConnectionService, ConnectionEvent } from '../../core/interfaces/IConnectionService';
@@ -11,6 +12,7 @@ export const SenderCard: React.FC = () => {
   const [isDragActive, setIsDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'transferring' | 'done'>('idle');
   const [progress, setProgress] = useState<number>(0);
@@ -20,11 +22,94 @@ export const SenderCard: React.FC = () => {
   const connectionRef = useRef<IConnectionService | null>(null);
   const pendingFileRef = useRef<File | null>(null);
   const hasSentInitialFileRef = useRef(false);
+  // Espelha o `status` em uma ref para o listener global de drag-and-drop
+  // (registrado 1x, sem depender de re-render) sempre ler o valor atual.
+  const statusRef = useRef(status);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   useEffect(() => {
     // Fecha a conexão P2P e a sinalização se o usuário sair da página.
     return () => {
       connectionRef.current?.disconnect();
+    };
+  }, []);
+
+  // Gera o QR code localmente (sem depender de nenhum serviço externo, já
+  // que o link em si concede acesso à sala) sempre que o link muda.
+  useEffect(() => {
+    if (!roomUrl) {
+      setQrCodeDataUrl(null);
+      return;
+    }
+
+    let cancelled = false;
+    QRCode.toDataURL(roomUrl, {
+      width: 220,
+      margin: 1,
+      color: { dark: '#18181b', light: '#ffffff' }
+    })
+      .then((dataUrl) => { if (!cancelled) setQrCodeDataUrl(dataUrl); })
+      .catch((err) => console.error('Erro ao gerar QR code:', err));
+
+    return () => { cancelled = true; };
+  }, [roomUrl]);
+
+  // Drag-and-drop funcionando na página inteira, não só na caixinha de
+  // upload — a maioria dos usuários solta o arquivo em qualquer lugar da
+  // tela. Usa um contador de dragenter/dragleave porque esses eventos
+  // disparam repetidamente ao passar por cima de elementos filhos.
+  useEffect(() => {
+    let dragCounter = 0;
+
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files');
+
+    const handleDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragCounter++;
+      setIsDragActive(true);
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragCounter = Math.max(0, dragCounter - 1);
+      if (dragCounter === 0) setIsDragActive(false);
+    };
+
+    const handleDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragCounter = 0;
+      setIsDragActive(false);
+
+      const droppedFile = e.dataTransfer?.files?.[0];
+      if (!droppedFile) return;
+
+      if (statusRef.current === 'idle') {
+        startTransfer(droppedFile);
+      } else if (statusRef.current === 'done') {
+        sendAnotherFile(droppedFile);
+      } else {
+        toast.info("Aguarde a transferência atual terminar antes de enviar outro arquivo.");
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
     };
   }, []);
 
@@ -123,11 +208,17 @@ export const SenderCard: React.FC = () => {
     <div className="w-full max-w-md rounded-3xl p-5 shadow-2xl mx-auto text-left border border-zinc-800 bg-zinc-900">
       <Toaster position="top-right" richColors theme="dark" />
 
+      {isDragActive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/85 backdrop-blur-sm pointer-events-none">
+          <div className="border-2 border-dashed border-orange-500 rounded-3xl px-14 py-12 text-center bg-zinc-900/60">
+            <Upload size={40} className="mx-auto mb-4 text-orange-500" />
+            <p className="text-zinc-100 font-medium text-sm">Solte o arquivo em qualquer lugar da página</p>
+          </div>
+        </div>
+      )}
+
       {status === 'idle' && (
         <div
-          onDragOver={(e) => { e.preventDefault(); setIsDragActive(true); }}
-          onDragLeave={() => setIsDragActive(false)}
-          onDrop={(e) => { e.preventDefault(); setIsDragActive(false); if (e.dataTransfer.files?.[0]) startTransfer(e.dataTransfer.files[0]); }}
           onClick={() => fileInputRef.current?.click()}
           className={`w-full aspect-square border-2 border-dashed rounded-2xl flex flex-col items-center justify-center p-6 text-center cursor-pointer transition-all ${isDragActive ? 'border-orange-500 bg-orange-500/5' : 'border-zinc-800 bg-transparent'}`}
         >
@@ -163,6 +254,15 @@ export const SenderCard: React.FC = () => {
                     {copied ? <Check size={14} /> : <Copy size={14} />}
                   </button>
                 </div>
+
+                {qrCodeDataUrl && (
+                  <div className="flex flex-col items-center gap-2 pt-3">
+                    <div className="bg-white p-2.5 rounded-2xl">
+                      <img src={qrCodeDataUrl} alt="QR code para acessar a sala" className="w-32 h-32 block" />
+                    </div>
+                    <p className="text-[11px] text-zinc-500">Escaneie para abrir no celular</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
