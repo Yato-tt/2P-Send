@@ -1,7 +1,8 @@
 {
   "name": "2p-send",
   "type": "module",
-  "version": "0.0.1",
+  "version": "1.0.0",
+  "description": "Front-end Astro para transferência de arquivos P2P",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -13,9 +14,11 @@
   },
   "dependencies": {
     "@astrojs/react": "^6.0.0",
+    "@astrojs/vercel": "^11.0.2",
     "@tailwindcss/vite": "^4.3.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@upstash/redis": "^1.38.0",
     "astro": "^7.0.5",
     "lucide-react": "^1.23.0",
     "peerjs": "^1.5.5",

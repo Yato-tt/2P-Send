@@ -1,35 +1,30 @@
 import type { IConnectionService, ConnectionEvent } from "../../core/interfaces/IConnectionService";
 
-// Credenciais de um servidor TURN opcional, configuráveis via variáveis de
-// ambiente públicas do Astro (PUBLIC_*). STUN sozinho não é suficiente para
-// atravessar NAT simétrico, CGNAT (comum em redes móveis) ou firewalls
-// corporativos — cenários comuns quando remetente e destinatário estão em
-// redes diferentes. Sem TURN, esses casos vão falhar silenciosamente com
-// iceConnectionState = 'failed'.
 const TURN_URL = (import.meta.env.PUBLIC_TURN_URL as string) || '';
 const TURN_USERNAME = (import.meta.env.PUBLIC_TURN_USERNAME as string) || '';
 const TURN_CREDENTIAL = (import.meta.env.PUBLIC_TURN_CREDENTIAL as string) || '';
+
+const SIGNALING_WS_URL = (import.meta.env.PUBLIC_SIGNALING_WS_URL as string) || 'ws://localhost:8787';
+
+const SOCKET_CONNECT_TIMEOUT_MS = 8000;
 
 export class WebRtcConnectionService implements IConnectionService {
 
     private peerConnection: RTCPeerConnection | null = null;
     private dataChannel: RTCDataChannel | null = null;
-    private eventSource: EventSource | null = null;
+    private socket: WebSocket | null = null;
 
-    private roomId: string = '';
     private role: 'sender' | 'receiver' = 'sender';
-    private peerId: string = '';
 
-    private pendingCandidates: RTCIceCandidateInit[] = [];
     private remoteDescriptionSet = false;
+    private pendingCandidates: RTCIceCandidateInit[] = [];
+
+    private outgoingQueue: unknown[] = [];
 
     private onChunkReceivedCallback: ((chunk: ArrayBuffer) => void) | null = null;
     private onMessageReceivedCallback: ((data: any) => void) | null = null;
     private onStatusChangeCallback: ((event: ConnectionEvent) => void) | null = null;
 
-    // Pausa o envio quando o buffer pendente do canal passa de 1MB, retoma
-    // quando cai abaixo de 256KB. Sem isso, enviar chunks mais rápido do que
-    // a rede consegue escoar estoura o buffer do SCTP.
     private static readonly MAX_BUFFERED_AMOUNT = 1 * 1024 * 1024;
     private static readonly BUFFERED_AMOUNT_LOW_THRESHOLD = 256 * 1024;
 
@@ -46,20 +41,9 @@ export class WebRtcConnectionService implements IConnectionService {
     };
 
     async joinRoom(roomId: string, role: "sender" | "receiver"): Promise<void> {
-        this.roomId = roomId;
         this.role = role;
-        this.peerId = Math.random().toString(36).substring(7);
 
-        const signalingUrl = `/api/signaling?roomId=${roomId}&role=${role}&peerId=${this.peerId}`;
-        this.eventSource = new EventSource(signalingUrl);
-
-        this.eventSource.onerror = () => {
-            // O EventSource tenta reconectar sozinho; apenas avisamos.
-            this.notifyStatusChange({
-                type: 'connection-error',
-                message: 'Conexão de sinalização instável. Tentando reconectar...'
-            });
-        };
+        await this.connectSignalingSocket(roomId, role);
 
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
@@ -71,6 +55,7 @@ export class WebRtcConnectionService implements IConnectionService {
 
         this.peerConnection.oniceconnectionstatechange = () => {
             const state = this.peerConnection?.iceConnectionState;
+            console.log('[ice] estado mudou para:', state);
             if (state === 'failed') {
                 this.notifyStatusChange({
                     type: 'connection-error',
@@ -82,9 +67,7 @@ export class WebRtcConnectionService implements IConnectionService {
         };
 
         if (this.role === 'sender') {
-            this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
-                ordered: true
-            });
+            this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', { ordered: true });
             this.setupDataChannelHandlers();
 
             const offer = await this.peerConnection.createOffer();
@@ -96,22 +79,15 @@ export class WebRtcConnectionService implements IConnectionService {
                 this.setupDataChannelHandlers();
             };
         }
-
-        this.eventSource.onmessage = async (event) => {
-            const message = JSON.parse(event.data);
-            await this.handleSignalingMessage(message);
-        };
     }
 
     async sendChunk(chunk: ArrayBuffer): Promise<void> {
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             throw new Error('Canal de dados não está aberto para envio.');
         }
-
         if (this.dataChannel.bufferedAmount > WebRtcConnectionService.MAX_BUFFERED_AMOUNT) {
             await this.waitForBufferDrain();
         }
-
         this.dataChannel.send(chunk);
     }
 
@@ -141,8 +117,105 @@ export class WebRtcConnectionService implements IConnectionService {
     disconnect(): void {
         this.dataChannel?.close();
         this.peerConnection?.close();
-        this.eventSource?.close();
+        this.socket?.close();
         this.notifyStatusChange({ type: 'peer-disconnected' });
+    }
+
+    private connectSignalingSocket(roomId: string, role: 'sender' | 'receiver'): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const url = `${SIGNALING_WS_URL}?roomId=${encodeURIComponent(roomId)}&role=${role}`;
+            console.log('[signaling] conectando em', url);
+            const socket = new WebSocket(url);
+            this.socket = socket;
+
+            const timeoutId = setTimeout(() => {
+                if (socket.readyState !== WebSocket.OPEN) {
+                    console.error('[signaling] timeout esperando o socket abrir. readyState =', socket.readyState);
+                    reject(new Error('Não foi possível conectar ao servidor de sinalização.'));
+                }
+            }, SOCKET_CONNECT_TIMEOUT_MS);
+
+            socket.onopen = () => {
+                console.log('[signaling] socket aberto');
+                clearTimeout(timeoutId);
+                // Esvazia qualquer mensagem que tentou sair antes de abrir.
+                for (const msg of this.outgoingQueue) socket.send(JSON.stringify(msg));
+                this.outgoingQueue = [];
+                resolve();
+            };
+
+            socket.onmessage = (event) => {
+                console.log('[signaling] mensagem recebida:', event.data);
+                try {
+                    const message = JSON.parse(event.data);
+                    this.handleSignalingMessage(message);
+                } catch (err) {
+                    console.error('Mensagem de sinalização inválida:', err);
+                }
+            };
+
+            socket.onerror = (err) => {
+                console.error('[signaling] erro no socket:', err);
+                this.notifyStatusChange({
+                    type: 'connection-error',
+                    message: 'Erro na conexão com o servidor de sinalização.'
+                });
+            };
+
+            socket.onclose = (event) => {
+                console.log('[signaling] socket fechado. code =', event.code, 'reason =', event.reason);
+            };
+        });
+    }
+
+    private sendSignalingMessage(data: unknown): void {
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            this.socket.send(JSON.stringify(data));
+        } else {
+            this.outgoingQueue.push(data);
+        }
+    }
+
+    private async handleSignalingMessage(message: any): Promise<void> {
+        if (!this.peerConnection) return;
+
+        try {
+            if (message.type === 'offer' && this.role === 'receiver') {
+                await this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp));
+                this.remoteDescriptionSet = true;
+                await this.flushPendingCandidates();
+
+                const answer = await this.peerConnection.createAnswer();
+                await this.peerConnection.setLocalDescription(answer);
+                this.sendSignalingMessage({ type: 'answer', sdp: answer });
+
+            } else if (message.type === 'answer' && this.role === 'sender') {
+                await this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp));
+                this.remoteDescriptionSet = true;
+                await this.flushPendingCandidates();
+
+            } else if (message.type === 'candidate') {
+                if (this.remoteDescriptionSet) {
+                    await this.peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+                } else {
+                    this.pendingCandidates.push(message.candidate);
+                }
+            }
+        } catch (error) {
+            this.notifyStatusChange({ type: 'connection-error', message: 'Falha no aperto de mão da sinalização.' });
+        }
+    }
+
+    private async flushPendingCandidates(): Promise<void> {
+        const candidates = this.pendingCandidates;
+        this.pendingCandidates = [];
+        for (const candidate of candidates) {
+            try {
+                await this.peerConnection?.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+                console.error('Erro ao aplicar ICE candidate pendente:', err);
+            }
+        }
     }
 
     private waitForBufferDrain(): Promise<void> {
@@ -180,74 +253,14 @@ export class WebRtcConnectionService implements IConnectionService {
                 this.onChunkReceivedCallback?.(event.data);
                 return;
             }
-
             if (typeof event.data === 'string') {
                 try {
-                    const parsed = JSON.parse(event.data);
-                    this.onMessageReceivedCallback?.(parsed);
-                } catch {
-                    // mensagem de controle malformada — ignora
+                    this.onMessageReceivedCallback?.(JSON.parse(event.data));
+                } catch (e) {
+                    console.error('O tipo de dado não é string', e);
                 }
             }
         };
-    }
-
-    private async handleSignalingMessage(message: any): Promise<void> {
-        if (!this.peerConnection) return;
-
-        try {
-            if (message.type === 'offer' && this.role === 'receiver') {
-                await this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp));
-                this.remoteDescriptionSet = true;
-                await this.flushPendingCandidates();
-
-                const answer = await this.peerConnection.createAnswer();
-                await this.peerConnection.setLocalDescription(answer);
-                this.sendSignalingMessage({ type: 'answer', sdp: answer });
-
-            } else if (message.type === 'answer' && this.role === 'sender') {
-                await this.peerConnection.setRemoteDescription(new RTCSessionDescription(message.sdp));
-                this.remoteDescriptionSet = true;
-                await this.flushPendingCandidates();
-
-            } else if (message.type === 'candidate') {
-                if (this.remoteDescriptionSet) {
-                    await this.peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
-                } else {
-                    // O candidato chegou antes da SDP remota ser aplicada —
-                    // comum quando os dois peers estão em redes diferentes e
-                    // o tempo de handshake não bate. Guarda para aplicar
-                    // assim que a SDP remota for definida.
-                    this.pendingCandidates.push(message.candidate);
-                }
-            }
-        } catch (error) {
-            this.notifyStatusChange({ type: 'connection-error', message: 'Falha no aperto de mão da sinalização.' });
-        }
-    }
-
-    private async flushPendingCandidates(): Promise<void> {
-        const candidates = this.pendingCandidates;
-        this.pendingCandidates = [];
-        for (const candidate of candidates) {
-            try {
-                await this.peerConnection?.addIceCandidate(new RTCIceCandidate(candidate));
-            } catch (error) {
-                console.error('Erro ao aplicar ICE candidate pendente:', error);
-            }
-        }
-    }
-
-    private async sendSignalingMessage(data: any) {
-        await fetch('/api/signaling', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                roomId: this.roomId,
-                role: this.role,
-                data
-            })
-        });
     }
 
     private notifyStatusChange(event: ConnectionEvent): void {
