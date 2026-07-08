@@ -1,5 +1,5 @@
 ---
-import Logo from "../components/astro/Logo.astro";
+import { LogoLink } from "../components/react/LogoLink";
 import { SenderCard } from "../components/react/SenderCard";
 import "../../src/styles/global.css";
 ---
@@ -7,11 +7,8 @@ import "../../src/styles/global.css";
 <html lang="pt-br">
   <head>
     <meta charset="utf-8" />
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      href="../components/astro/Logo.astro"
-    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Envio2p • Transferência Direta de Arquivos P2P</title>
   </head>
@@ -22,7 +19,7 @@ import "../../src/styles/global.css";
     <header
       class="w-full max-w-6xl mx-auto px-6 py-4 flex justify-between items-center shrink-0"
     >
-      <Logo />
+      <LogoLink client:load />
       <div class="hidden sm:flex items-center gap-2 text-xs text-zinc-500">
         <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
         Sinalização ativa

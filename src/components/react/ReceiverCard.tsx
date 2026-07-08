@@ -8,13 +8,41 @@ interface ReceiverCardProps {
 }
 
 export const ReceiverCard: React.FC<ReceiverCardProps> = ({ roomId }) => {
-  const { status, progress, fileMeta, resetForNextFile } = useP2PReceiver(roomId);
+  const { status, progress, fileMeta, resetForNextFile, confirmDownload, declineDownload } = useP2PReceiver(roomId);
 
   return (
     <div className="w-full max-w-md rounded-3xl p-5 shadow-2xl mx-auto text-left border border-zinc-800 bg-zinc-900-custom/50">
       <Toaster position="top-right" richColors theme="dark" />
 
       <h2 className="text-xs font-semibold text-zinc-500 mb-4 uppercase tracking-wide text-center">Canal P2P</h2>
+
+      {status === 'confirm-download' && fileMeta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/85 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-3xl p-6 border border-zinc-800 bg-zinc-900 shadow-2xl text-center">
+            <div className="p-4 rounded-full mb-4 bg-orange-500/10 text-orange-500 mx-auto w-fit">
+              <Download className="w-7 h-7" />
+            </div>
+            <h3 className="text-sm font-semibold text-zinc-100">Baixar arquivo recebido?</h3>
+            <p className="text-xs text-zinc-500 mt-2 truncate font-mono">{fileMeta.name}</p>
+            <p className="text-[11px] text-zinc-600 mt-0.5">{(fileMeta.size / (1024 * 1024)).toFixed(2)} MB</p>
+
+            <div className="flex flex-col gap-2 mt-6">
+              <button
+                onClick={confirmDownload}
+                className="w-full py-2.5 rounded-xl text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Download size={14} /> Baixar agora
+              </button>
+              <button
+                onClick={declineDownload}
+                className="w-full py-2 rounded-xl text-xs font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors cursor-pointer"
+              >
+                Agora não
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {status === 'connecting' && (
         <div className="w-full aspect-square border rounded-2xl flex flex-col items-center justify-center p-6 text-center border-zinc-800 bg-zinc-950-custom/40">

@@ -62,7 +62,8 @@ export class FileTransferService implements IFileTransferService {
 
     receiveAndAssembleFile(
         metadata: FileMetadata,
-        onProgress: (progress: TransferProgress) => void
+        onProgress: (progress: TransferProgress) => void,
+        onComplete: (blob: Blob) => void
     )  {
         const chunks: BlobPart[] = [];
         let bytesTransferred = 0;
@@ -85,15 +86,10 @@ export class FileTransferService implements IFileTransferService {
                 });
 
                 if (bytesTransferred >= metadata.size) {
+                    // Só monta o Blob e entrega — decidir se/quando baixar é
+                    // responsabilidade da UI (que vai perguntar ao usuário).
                     const fileBlob = new Blob(chunks, { type: metadata.type });
-                    const downloadUrl = URL.createObjectURL(fileBlob);
-
-                    const anchor = document.createElement('a');
-                    anchor.href = downloadUrl;
-                    anchor.download = metadata.name;
-                    anchor.click();
-
-                    URL.revokeObjectURL(downloadUrl);
+                    onComplete(fileBlob);
                 }
             }
         };

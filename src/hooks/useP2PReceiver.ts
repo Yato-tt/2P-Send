@@ -6,8 +6,15 @@ import type { FileMetadata } from '../core/interfaces/IFileTransferService';
 
 const fileTransferService = new FileTransferService();
 
-export type ReceiverStatus = 'connecting' | 'transferring' | 'done';
+export type ReceiverStatus = 'connecting' | 'transferring' | 'confirm-download' | 'done';
 
+/**
+ * Dono da conexão WebRTC do lado do destinatário: entra na sala, escuta
+ * metadata de arquivo, monta os chunks recebidos e reporta progresso.
+ * Quando a montagem termina, NÃO baixa sozinho — guarda o Blob e espera
+ * confirmação do usuário (`confirmDownload`), quem realmente decide se
+ * salva o arquivo é a UI.
+ */
 export function useP2PReceiver(roomId: string) {
   const [status, setStatus] = useState<ReceiverStatus>('connecting');
   const [progress, setProgress] = useState(0);
@@ -17,6 +24,7 @@ export function useP2PReceiver(roomId: string) {
   // por um novo, com buffer de chunks zerado — sem risco de misturar bytes
   // de arquivos diferentes na mesma sala.
   const activeHandlerRef = useRef<{ handleChunk: (chunk: ArrayBuffer) => void } | null>(null);
+  const pendingBlobRef = useRef<Blob | null>(null);
 
   useEffect(() => {
     if (!roomId) return;
@@ -44,13 +52,14 @@ export function useP2PReceiver(roomId: string) {
         setStatus('transferring');
         toast.info('Arquivo recebido! Iniciando download...');
 
-        activeHandlerRef.current = fileTransferService.receiveAndAssembleFile(meta, (p) => {
-          setProgress(p.percentage);
-          if (p.byteTransferred >= p.totalByte) {
-            setStatus('done');
-            toast.success('Download guardado com sucesso!');
+        activeHandlerRef.current = fileTransferService.receiveAndAssembleFile(
+          meta,
+          (p) => setProgress(p.percentage),
+          (blob) => {
+            pendingBlobRef.current = blob;
+            setStatus('confirm-download');
           }
-        });
+        );
       }
     });
 
@@ -69,10 +78,34 @@ export function useP2PReceiver(roomId: string) {
   }, [roomId]);
 
   const resetForNextFile = () => {
+    pendingBlobRef.current = null;
     setStatus('connecting');
     setProgress(0);
     setFileMeta(null);
   };
 
-  return { status, progress, fileMeta, resetForNextFile };
+  const confirmDownload = () => {
+    const blob = pendingBlobRef.current;
+    if (!blob || !fileMeta) return;
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileMeta.name;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    pendingBlobRef.current = null;
+    setStatus('done');
+    toast.success('Download guardado com sucesso!');
+  };
+
+  const declineDownload = () => {
+    pendingBlobRef.current = null;
+    resetForNextFile();
+  };
+
+  return { status, progress, fileMeta, resetForNextFile, confirmDownload, declineDownload };
 }

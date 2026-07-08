@@ -16,7 +16,11 @@ export interface TransferProgress {
 export interface IFileTransferService {
     sendLargeFile(file: File, connection: IConnectionService, onProgress: (progress: TransferProgress) => void): Promise<void>;
 
-    receiveAndAssembleFile(metadata: FileMetadata, onProgress: (progress: TransferProgress) => void): {
+    receiveAndAssembleFile(
+        metadata: FileMetadata,
+        onProgress: (progress: TransferProgress) => void,
+        onComplete: (blob: Blob) => void
+    ): {
         handleChunk(chunk: ArrayBuffer):void;
     }
 }
