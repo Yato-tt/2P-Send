@@ -2,7 +2,10 @@ import type { IConnectionService } from "../interfaces/IConnectionService";
 import type { FileMetadata, IFileTransferService, TransferProgress } from "../interfaces/IFileTransferService";
 
 export class FileTransferService implements IFileTransferService {
-    private CHUNK_SIZE = 64 * 1024;
+    // 256KB por chunk — dentro do limite seguro de mensagem do DataChannel
+    // em navegadores modernos. Chunks maiores reduzem a sobrecarga de
+    // overhead por mensagem e melhoram bastante o throughput.
+    private CHUNK_SIZE = 256 * 1024;
 
     async sendLargeFile(
         file: File,

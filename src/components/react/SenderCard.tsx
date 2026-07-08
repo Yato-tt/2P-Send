@@ -27,8 +27,9 @@ export const SenderCard: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFilesSelected = useCallback((files: File[]) => {
-    fileQueue.addPendingFiles(files, () => {
-      toast.error(`Você pode selecionar no máximo ${MAX_FILES} arquivos por vez.`);
+    fileQueue.addPendingFiles(files, {
+      onCountExceeded: () => toast.error(`Você pode selecionar no máximo ${MAX_FILES} arquivos por vez.`),
+      onSizeExceeded: () => toast.error('O total dos arquivos da sala não pode passar de 2GB.')
     });
   }, [fileQueue]);
 

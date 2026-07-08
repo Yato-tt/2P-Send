@@ -1,9 +1,14 @@
 import type { IConnectionService, ConnectionEvent } from "../../core/interfaces/IConnectionService";
 
+// Servidor TURN — obrigatório para atravessar NAT simétrico, CGNAT (redes
+// móveis) e firewalls corporativos. Trocar o transporte de sinalização não
+// substitui isso: são dois problemas diferentes.
 const TURN_URL = (import.meta.env.PUBLIC_TURN_URL as string) || '';
 const TURN_USERNAME = (import.meta.env.PUBLIC_TURN_USERNAME as string) || '';
 const TURN_CREDENTIAL = (import.meta.env.PUBLIC_TURN_CREDENTIAL as string) || '';
 
+// URL do servidor de sinalização standalone (pasta /server deste projeto).
+// Em dev, o padrão aponta pro servidor rodando localmente.
 const SIGNALING_WS_URL = (import.meta.env.PUBLIC_SIGNALING_WS_URL as string) || 'ws://localhost:8787';
 
 const SOCKET_CONNECT_TIMEOUT_MS = 8000;
@@ -18,15 +23,21 @@ export class WebRtcConnectionService implements IConnectionService {
 
     private remoteDescriptionSet = false;
     private pendingCandidates: RTCIceCandidateInit[] = [];
-
+    // Mensagens que tentaram sair antes do socket de sinalização abrir.
     private outgoingQueue: unknown[] = [];
 
     private onChunkReceivedCallback: ((chunk: ArrayBuffer) => void) | null = null;
     private onMessageReceivedCallback: ((data: any) => void) | null = null;
     private onStatusChangeCallback: ((event: ConnectionEvent) => void) | null = null;
 
-    private static readonly MAX_BUFFERED_AMOUNT = 1 * 1024 * 1024;
-    private static readonly BUFFERED_AMOUNT_LOW_THRESHOLD = 256 * 1024;
+    // Buffer bem maior antes de pausar (16MB) e uma margem mais alta pra
+    // retomar (4MB). Com 1MB/256KB o canal ficava ocioso entre pausa e
+    // retomada com muita frequência, sobretudo em conexões com latência
+    // maior (relay TURN, redes móveis) — isso sozinho derrubava bastante o
+    // throughput. Valores maiores mantêm mais dados "em voo" e usam melhor
+    // a banda disponível.
+    private static readonly MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024;
+    private static readonly BUFFERED_AMOUNT_LOW_THRESHOLD = 4 * 1024 * 1024;
 
     private rtcConfig: RTCConfiguration = {
         iceServers: [
@@ -172,6 +183,7 @@ export class WebRtcConnectionService implements IConnectionService {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.send(JSON.stringify(data));
         } else {
+            // Socket ainda conectando — guarda e manda assim que abrir.
             this.outgoingQueue.push(data);
         }
     }
@@ -256,8 +268,8 @@ export class WebRtcConnectionService implements IConnectionService {
             if (typeof event.data === 'string') {
                 try {
                     this.onMessageReceivedCallback?.(JSON.parse(event.data));
-                } catch (e) {
-                    console.error('O tipo de dado não é string', e);
+                } catch {
+                    // mensagem de controle malformada — ignora
                 }
             }
         };
